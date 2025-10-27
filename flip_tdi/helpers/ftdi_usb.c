@@ -181,9 +181,10 @@ static void ftdi_usb_deinit(usbd_device* dev) {
 
     ftdi_free(ftdi_usb->ftdi);
 
-    free(ftdi_usb->usb.str_prod_descr);
+    /* Product and serial string descriptors point to static storage, so they
+     * must not be freed here. Simply clear the pointers before releasing the
+     * container structure. */
     ftdi_usb->usb.str_prod_descr = NULL;
-    free(ftdi_usb->usb.str_serial_descr);
     ftdi_usb->usb.str_serial_descr = NULL;
     free(ftdi_usb);
 }
