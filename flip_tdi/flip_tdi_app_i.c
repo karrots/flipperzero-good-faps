@@ -14,7 +14,10 @@ void flip_tdi_start(FlipTDIApp* app) {
 void flip_tdi_stop(FlipTDIApp* app) {
     furi_assert(app);
 
-    ftdi_usb_stop(app->ftdi_usb);
+    if(app->ftdi_usb) {
+        ftdi_usb_stop(app->ftdi_usb);
+        app->ftdi_usb = NULL;
+    }
 }
 
 void flip_tdi_set_i2c_mode(FlipTDIApp* app, bool enable) {
