@@ -2,6 +2,7 @@
 #include "furi.h"
 #include <furi_hal.h>
 #include "ftdi_gpio.h"
+#include "ftdi_i2c.h"
 #include "ftdi_latency_timer.h"
 #include "ftdi_mpsse_data.h"
 
@@ -16,6 +17,7 @@ typedef enum {
     FtdiMpsseErrorNone = 0,
     FtdiMpsseErrorTimeout,
     FtdiMpsseErrorTxOverflow,
+    FtdiMpsseErrorI2cAck,
 } FtdiMpsseError;
 
 struct FtdiMpsse {
@@ -37,6 +39,10 @@ struct FtdiMpsse {
 
     uint8_t* data_buf;
     uint16_t data_buf_count_byte;
+
+    FtdiI2c i2c;
+    bool i2c_mode;
+    bool i2c_ready;
 };
 
 void ftdi_mpsse_gpio_set_callback(
@@ -49,22 +55,29 @@ void ftdi_mpsse_gpio_set_callback(
 
 void ftdi_mpsse_gpio_set_direction(FtdiMpsse* ftdi_mpsse) {
     ftdi_gpio_set_direction(ftdi_mpsse->gpio_mask);
-    if(ftdi_mpsse->gpio_mask & 0b00000001) {
-        ftdi_mpsse->gpio_o[0] = ftdi_gpio_set_b0;
-    } else {
+    bool i2c_mode = ftdi_mpsse->i2c_mode;
+    if(i2c_mode) {
         ftdi_mpsse->gpio_o[0] = ftdi_gpio_set_noop;
-    }
-
-    if(ftdi_mpsse->gpio_mask & 0b00000010) {
-        ftdi_mpsse->gpio_o[1] = ftdi_gpio_set_b1;
-    } else {
         ftdi_mpsse->gpio_o[1] = ftdi_gpio_set_noop;
-    }
-
-    if(ftdi_mpsse->gpio_mask & 0b00000100) {
-        ftdi_mpsse->gpio_o[2] = ftdi_gpio_set_b2;
-    } else {
         ftdi_mpsse->gpio_o[2] = ftdi_gpio_set_noop;
+    } else {
+        if(ftdi_mpsse->gpio_mask & 0b00000001) {
+            ftdi_mpsse->gpio_o[0] = ftdi_gpio_set_b0;
+        } else {
+            ftdi_mpsse->gpio_o[0] = ftdi_gpio_set_noop;
+        }
+
+        if(ftdi_mpsse->gpio_mask & 0b00000010) {
+            ftdi_mpsse->gpio_o[1] = ftdi_gpio_set_b1;
+        } else {
+            ftdi_mpsse->gpio_o[1] = ftdi_gpio_set_noop;
+        }
+
+        if(ftdi_mpsse->gpio_mask & 0b00000100) {
+            ftdi_mpsse->gpio_o[2] = ftdi_gpio_set_b2;
+        } else {
+            ftdi_mpsse->gpio_o[2] = ftdi_gpio_set_noop;
+        }
     }
 
     if(ftdi_mpsse->gpio_mask & 0b00001000) {
@@ -104,9 +117,14 @@ void ftdi_mpsse_gpio_init(FtdiMpsse* ftdi_mpsse) {
 }
 
 static inline void ftdi_mpsse_gpio_set(FtdiMpsse* ftdi_mpsse) {
-    ftdi_mpsse->gpio_o[0](ftdi_mpsse->gpio_state & 0b00000001);
-    ftdi_mpsse->gpio_o[1](ftdi_mpsse->gpio_state & 0b00000010);
-    ftdi_mpsse->gpio_o[2](ftdi_mpsse->gpio_state & 0b00000100);
+    bool i2c_mode = ftdi_mpsse->i2c_mode;
+    if(i2c_mode) {
+        ftdi_i2c_set_lines(&ftdi_mpsse->i2c, ftdi_mpsse->gpio_state, ftdi_mpsse->gpio_mask);
+    } else {
+        ftdi_mpsse->gpio_o[0](ftdi_mpsse->gpio_state & 0b00000001);
+        ftdi_mpsse->gpio_o[1](ftdi_mpsse->gpio_state & 0b00000010);
+        ftdi_mpsse->gpio_o[2](ftdi_mpsse->gpio_state & 0b00000100);
+    }
     ftdi_mpsse->gpio_o[3](ftdi_mpsse->gpio_state & 0b00001000);
     ftdi_mpsse->gpio_o[4](ftdi_mpsse->gpio_state & 0b00010000);
     ftdi_mpsse->gpio_o[5](ftdi_mpsse->gpio_state & 0b00100000);
@@ -143,6 +161,9 @@ FtdiMpsse* ftdi_mpsse_alloc(Ftdi* ftdi) {
     ftdi_mpsse->data_buf_count_byte = 0;
 
     ftdi_mpsse_gpio_init(ftdi_mpsse);
+    ftdi_i2c_setup(&ftdi_mpsse->i2c);
+    ftdi_mpsse->i2c_mode = false;
+    ftdi_mpsse->i2c_ready = false;
 
     return ftdi_mpsse;
 }
@@ -150,6 +171,9 @@ FtdiMpsse* ftdi_mpsse_alloc(Ftdi* ftdi) {
 void ftdi_mpsse_free(FtdiMpsse* ftdi_mpsse) {
     if(!ftdi_mpsse) return;
     free(ftdi_mpsse->data_buf);
+    if(ftdi_mpsse->i2c_ready) {
+        ftdi_i2c_disable(&ftdi_mpsse->i2c);
+    }
     ftdi_gpio_deinit();
     free(ftdi_mpsse);
     ftdi_mpsse = NULL;
@@ -212,6 +236,14 @@ void ftdi_mpsse_state_machine(FtdiMpsse* ftdi_mpsse) {
     ftdi_mpsse->error = FtdiMpsseErrorNone;
     uint8_t data = ftdi_mpsse_get_data_stream(ftdi_mpsse);
     uint8_t gpio_state_io = 0xFF;
+    bool i2c_mode = ftdi_mpsse->i2c_mode;
+    if(i2c_mode && !ftdi_mpsse->i2c_ready) {
+        ftdi_i2c_enable(&ftdi_mpsse->i2c);
+        ftdi_mpsse->i2c_ready = true;
+    } else if(!i2c_mode && ftdi_mpsse->i2c_ready) {
+        ftdi_i2c_disable(&ftdi_mpsse->i2c);
+        ftdi_mpsse->i2c_ready = false;
+    }
     switch(data) {
     case FtdiMpsseCommandsSetBitsLow: // 0x80  Change LSB GPIO output */
         ftdi_mpsse->gpio_state = ftdi_mpsse_get_data_stream(ftdi_mpsse);
@@ -247,14 +279,32 @@ void ftdi_mpsse_state_machine(FtdiMpsse* ftdi_mpsse) {
         ftdi_mpsse->data_size = ftdi_mpsse_get_data_size(ftdi_mpsse);
         //read data
         ftdi_mpsse_get_data(ftdi_mpsse);
-        ftdi_mpsse_data_write_bytes_pve_msb(ftdi_mpsse->data_buf, ftdi_mpsse->data_buf_count_byte);
+        if(i2c_mode) {
+            size_t expected = ftdi_mpsse->data_buf_count_byte;
+            size_t ack_count = ftdi_i2c_write(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, expected);
+            if(ack_count < expected) {
+                ftdi_mpsse->error = FtdiMpsseErrorI2cAck;
+                FURI_LOG_E(TAG, "I2C write NACK");
+            }
+        } else {
+            ftdi_mpsse_data_write_bytes_pve_msb(ftdi_mpsse->data_buf, ftdi_mpsse->data_buf_count_byte);
+        }
         break;
     case FtdiMpsseCommandsWriteBytesNveMsb: // 0x11  Write bytes with negative edge clock, MSB first */
         //spi mode 0,2
         ftdi_mpsse->data_size = ftdi_mpsse_get_data_size(ftdi_mpsse);
         //read data
         ftdi_mpsse_get_data(ftdi_mpsse);
-        ftdi_mpsse_data_write_bytes_nve_msb(ftdi_mpsse->data_buf, ftdi_mpsse->data_buf_count_byte);
+        if(i2c_mode) {
+            size_t expected = ftdi_mpsse->data_buf_count_byte;
+            size_t ack_count = ftdi_i2c_write(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, expected);
+            if(ack_count < expected) {
+                ftdi_mpsse->error = FtdiMpsseErrorI2cAck;
+                FURI_LOG_E(TAG, "I2C write NACK");
+            }
+        } else {
+            ftdi_mpsse_data_write_bytes_nve_msb(ftdi_mpsse->data_buf, ftdi_mpsse->data_buf_count_byte);
+        }
         break;
     case FtdiMpsseCommandsWriteBitsPveMsb: // 0x12  Write bits with positive edge clock, MSB first */
         //not supported
@@ -302,7 +352,14 @@ void ftdi_mpsse_state_machine(FtdiMpsse* ftdi_mpsse) {
             FURI_LOG_E(TAG, "Tx buffer overflow");
         } else {
             ftdi_mpsse->data_size++;
-            ftdi_mpsse_data_read_bytes_pve_msb(ftdi_mpsse->data_buf, ftdi_mpsse->data_size);
+            if(i2c_mode) {
+                if(!ftdi_i2c_read(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, ftdi_mpsse->data_size)) {
+                    ftdi_mpsse->error = FtdiMpsseErrorI2cAck;
+                    break;
+                }
+            } else {
+                ftdi_mpsse_data_read_bytes_pve_msb(ftdi_mpsse->data_buf, ftdi_mpsse->data_size);
+            }
             ftdi_mpssse_set_data_stream(ftdi_mpsse, ftdi_mpsse->data_buf, ftdi_mpsse->data_size);
             ftdi_mpsse_immediate(ftdi_mpsse);
         }
@@ -315,7 +372,14 @@ void ftdi_mpsse_state_machine(FtdiMpsse* ftdi_mpsse) {
             FURI_LOG_E(TAG, "Tx buffer overflow");
         } else {
             ftdi_mpsse->data_size++;
-            ftdi_mpsse_data_read_bytes_nve_msb(ftdi_mpsse->data_buf, ftdi_mpsse->data_size);
+            if(i2c_mode) {
+                if(!ftdi_i2c_read(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, ftdi_mpsse->data_size)) {
+                    ftdi_mpsse->error = FtdiMpsseErrorI2cAck;
+                    break;
+                }
+            } else {
+                ftdi_mpsse_data_read_bytes_nve_msb(ftdi_mpsse->data_buf, ftdi_mpsse->data_size);
+            }
             ftdi_mpssse_set_data_stream(ftdi_mpsse, ftdi_mpsse->data_buf, ftdi_mpsse->data_size);
             ftdi_mpsse_immediate(ftdi_mpsse);
         }
@@ -324,10 +388,22 @@ void ftdi_mpsse_state_machine(FtdiMpsse* ftdi_mpsse) {
         //ftdi_mpssse_set_data_stream(ftdi_mpsse, 0xFF, ftdi_mpsse->data_size);
         break;
     case FtdiMpsseCommandsReadBitsPveMsb: // 0x22  Read bits with positive edge clock, MSB first */
-        //not supported
         ftdi_mpsse->data_size = ftdi_mpsse_get_data_size(ftdi_mpsse);
-        //write data
-        //ftdi_mpssse_set_data_stream(ftdi_mpsse, 0xFF, ftdi_mpsse->data_size);
+        if(i2c_mode) {
+            size_t bit_count = (size_t)ftdi_mpsse->data_size + 1U;
+            size_t byte_count = (bit_count + 7U) / 8U;
+            if(byte_count >= FTDI_MPSSE_TX_RX_SIZE) {
+                ftdi_mpsse->error = FtdiMpsseErrorTxOverflow;
+                FURI_LOG_E(TAG, "Tx buffer overflow");
+            } else {
+                if(!ftdi_i2c_read_bits(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, bit_count)) {
+                    ftdi_mpsse->error = FtdiMpsseErrorI2cAck;
+                    break;
+                }
+                ftdi_mpssse_set_data_stream(ftdi_mpsse, ftdi_mpsse->data_buf, byte_count);
+                ftdi_mpsse_immediate(ftdi_mpsse);
+            }
+        }
         break;
     case FtdiMpsseCommandsReadBitsNveMsb: // 0x26  Read bits with negative edge clock, MSB first */
         //not supported
@@ -374,18 +450,33 @@ void ftdi_mpsse_state_machine(FtdiMpsse* ftdi_mpsse) {
         //ftdi_mpssse_set_data_stream(ftdi_mpsse, 0xFF, ftdi_mpsse->data_size);
         break;
     case FtdiMpsseCommandsRwBytesPveNveMsb: // 0x31  Read/Write bytes with positive edge clock, MSB first */
-        //spi mode 1,3
         ftdi_mpsse->data_size = ftdi_mpsse_get_data_size(ftdi_mpsse);
-        //read data
-        //ftdi_mpsse_get_data(ftdi_mpsse);
-        //ftdi_mpssse_set_data_stream(ftdi_mpsse, 0xFF, ftdi_mpsse->data_size);
+        ftdi_mpsse_get_data(ftdi_mpsse);
+        if(i2c_mode) {
+            size_t expected = ftdi_mpsse->data_buf_count_byte;
+            size_t ack_count = ftdi_i2c_write(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, expected);
+            if(ack_count < expected) {
+                ftdi_mpsse->error = FtdiMpsseErrorI2cAck;
+                FURI_LOG_E(TAG, "I2C write NACK");
+            }
+        }
         break;
     case FtdiMpsseCommandsRwBytesNvePveMsb: // 0x34  Read/Write bytes with negative edge clock, MSB first */
-        //spi mode 0,2
         ftdi_mpsse->data_size = ftdi_mpsse_get_data_size(ftdi_mpsse);
-        //read data
-        //ftdi_mpsse_get_data(ftdi_mpsse);
-        //ftdi_mpssse_set_data_stream(ftdi_mpsse, 0xFF, ftdi_mpsse->data_size);
+        if(i2c_mode) {
+            if(ftdi_mpsse->data_size >= FTDI_MPSSE_TX_RX_SIZE) {
+                ftdi_mpsse->error = FtdiMpsseErrorTxOverflow;
+                FURI_LOG_E(TAG, "Tx buffer overflow");
+            } else {
+                ftdi_mpsse->data_size++;
+                if(!ftdi_i2c_read(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, ftdi_mpsse->data_size)) {
+                    ftdi_mpsse->error = FtdiMpsseErrorI2cAck;
+                    break;
+                }
+                ftdi_mpssse_set_data_stream(ftdi_mpsse, ftdi_mpsse->data_buf, ftdi_mpsse->data_size);
+                ftdi_mpsse_immediate(ftdi_mpsse);
+            }
+        }
         break;
     case FtdiMpsseCommandsRwBitsPveNveMsb: // 0x33  Read/Write bits with positive edge clock, MSB first */
         //not supported
@@ -456,7 +547,14 @@ void ftdi_mpsse_state_machine(FtdiMpsse* ftdi_mpsse) {
         ftdi_mpsse_immediate(ftdi_mpsse);
         break;
     case FtdiMpsseCommandsSetTckDivisor: // 0x86  Set clock */
-        ftdi_mpsse_immediate(ftdi_mpsse);
+        {
+            uint16_t divisor = ftdi_mpsse_get_data_stream(ftdi_mpsse);
+            divisor |= ((uint16_t)ftdi_mpsse_get_data_stream(ftdi_mpsse)) << 8;
+            if(i2c_mode) {
+                ftdi_i2c_set_divisor(&ftdi_mpsse->i2c, divisor);
+            }
+            ftdi_mpsse_immediate(ftdi_mpsse);
+        }
         break;
     case FtdiMpsseCommandsDisDiv5: // 0x8a  Disable divide by 5 */
         ftdi_mpsse->is_div5 = false;
@@ -525,4 +623,20 @@ void ftdi_mpsse_state_machine(FtdiMpsse* ftdi_mpsse) {
     default:
         break;
     }
+}
+
+void ftdi_mpsse_set_i2c_mode(FtdiMpsse* ftdi_mpsse, bool enable) {
+    if(!enable && ftdi_mpsse->i2c_ready) {
+        ftdi_i2c_disable(&ftdi_mpsse->i2c);
+        ftdi_mpsse->i2c_ready = false;
+    }
+
+    ftdi_mpsse->i2c_mode = enable;
+
+    if(enable && !ftdi_mpsse->i2c_ready) {
+        ftdi_i2c_enable(&ftdi_mpsse->i2c);
+        ftdi_mpsse->i2c_ready = true;
+    }
+
+    ftdi_mpsse_gpio_set_direction(ftdi_mpsse);
 }

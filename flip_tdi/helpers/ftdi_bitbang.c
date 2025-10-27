@@ -166,6 +166,10 @@ uint8_t ftdi_bitbang_get_gpio(FtdiBitbang* ftdi_bitbang) {
     return ftdi_bitbang->gpio_data = ftdi_bitbang_gpio_get();
 }
 
+void ftdi_bitbang_set_i2c_mode(FtdiBitbang* ftdi_bitbang, bool enable) {
+    ftdi_mpsse_set_i2c_mode(ftdi_bitbang->ftdi_mpsse, enable);
+}
+
 FtdiBitbang* ftdi_bitbang_alloc(Ftdi* ftdi) {
     FtdiBitbang* ftdi_bitbang = malloc(sizeof(FtdiBitbang));
     ftdi_bitbang->ftdi = ftdi;

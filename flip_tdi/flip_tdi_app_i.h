@@ -14,6 +14,7 @@
 #include <flip_tdi_icons.h>
 
 #include "helpers/ftdi_usb.h"
+#include "helpers/ftdi.h"
 
 
 typedef struct FlipTDIApp FlipTDIApp;
@@ -32,3 +33,4 @@ struct FlipTDIApp {
 
 void flip_tdi_start(FlipTDIApp* app);
 void flip_tdi_stop(FlipTDIApp* app);
+void flip_tdi_set_i2c_mode(FlipTDIApp* app, bool enable);

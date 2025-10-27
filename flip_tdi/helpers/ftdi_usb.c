@@ -181,9 +181,10 @@ static void ftdi_usb_deinit(usbd_device* dev) {
 
     ftdi_free(ftdi_usb->ftdi);
 
-    free(ftdi_usb->usb.str_prod_descr);
+    /* Product and serial string descriptors point to static storage, so they
+     * must not be freed here. Simply clear the pointers before releasing the
+     * container structure. */
     ftdi_usb->usb.str_prod_descr = NULL;
-    free(ftdi_usb->usb.str_serial_descr);
     ftdi_usb->usb.str_serial_descr = NULL;
     free(ftdi_usb);
 }
@@ -506,4 +507,11 @@ FtdiUsb* ftdi_usb_start(void) {
 
 void ftdi_usb_stop(FtdiUsb* ftdi_usb) {
     furi_hal_usb_set_config(ftdi_usb->usb_prev, NULL);
+}
+
+void ftdi_usb_set_i2c_mode(FtdiUsb* ftdi_usb, bool enable) {
+    if(!ftdi_usb) {
+        return;
+    }
+    ftdi_set_i2c_mode(ftdi_usb->ftdi, enable);
 }

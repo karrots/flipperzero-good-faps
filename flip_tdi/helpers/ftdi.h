@@ -1,5 +1,6 @@
 #pragma once
 #include "ftdi_usb_define.h"
+#include <stdbool.h>
 
 //#define FTDI_DEBUG
 
@@ -30,6 +31,8 @@ void ftdi_reset_latency_timer(Ftdi* ftdi);
 uint16_t* ftdi_get_modem_status_uint16_t(Ftdi* ftdi);
 FtdiModemStatus ftdi_get_modem_status(Ftdi* ftdi);
 void ftdi_set_modem_status(Ftdi* ftdi, FtdiModemStatus status);
+
+void ftdi_set_i2c_mode(Ftdi* ftdi, bool enable);
 
 void ftdi_start_uart_tx(Ftdi* ftdi);
 uint8_t ftdi_get_bitbang_gpio(Ftdi* ftdi);
