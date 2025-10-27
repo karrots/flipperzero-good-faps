@@ -29,5 +29,5 @@ void ftdi_i2c_enable(FtdiI2c* i2c);
 void ftdi_i2c_disable(FtdiI2c* i2c);
 void ftdi_i2c_set_lines(FtdiI2c* i2c, uint8_t value, uint8_t direction);
 void ftdi_i2c_set_divisor(FtdiI2c* i2c, uint16_t divisor);
-bool ftdi_i2c_write(FtdiI2c* i2c, const uint8_t* data, size_t size);
+size_t ftdi_i2c_write(FtdiI2c* i2c, const uint8_t* data, size_t size, uint8_t* ack_buf);
 bool ftdi_i2c_read(FtdiI2c* i2c, uint8_t* data, size_t size);

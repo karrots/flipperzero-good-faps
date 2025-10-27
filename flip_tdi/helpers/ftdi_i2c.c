@@ -134,10 +134,12 @@ static bool ftdi_i2c_read_ack(FtdiI2c* i2c) {
     return ack;
 }
 
-bool ftdi_i2c_write(FtdiI2c* i2c, const uint8_t* data, size_t size) {
-    if(!i2c->scl_enabled) {
-        return false;
+size_t ftdi_i2c_write(FtdiI2c* i2c, const uint8_t* data, size_t size, uint8_t* ack_buf) {
+    if(size == 0) {
+        return 0;
     }
+
+    size_t ack_count = 0;
 
     for(size_t index = 0; index < size; index++) {
         uint8_t value = data[index];
@@ -150,12 +152,17 @@ bool ftdi_i2c_write(FtdiI2c* i2c, const uint8_t* data, size_t size) {
             ftdi_i2c_drive_scl(i2c, false);
         }
 
-        if(!ftdi_i2c_read_ack(i2c)) {
-            return false;
+        bool ack = ftdi_i2c_read_ack(i2c);
+        if(ack_buf) {
+            ack_buf[ack_count] = ack ? 0x00 : 0x01;
+        }
+        ack_count++;
+        if(!ack) {
+            break;
         }
     }
 
-    return true;
+    return ack_count;
 }
 
 static void ftdi_i2c_send_ack(FtdiI2c* i2c, bool level) {
