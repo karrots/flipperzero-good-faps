@@ -1,6 +1,7 @@
 #include "ftdi_i2c.h"
 
 #include <stddef.h>
+#include <string.h>
 
 #include <furi_hal.h>
 #include <furi_hal_resources.h>
@@ -63,6 +64,28 @@ static inline void ftdi_i2c_half_period_delay(const FtdiI2c* i2c) {
     furi_delay_us(i2c->half_period_us);
 }
 
+static inline void ftdi_i2c_ack_reset(FtdiI2c* i2c) {
+    i2c->ack_count = 0;
+    i2c->ack_index = 0;
+}
+
+static inline void ftdi_i2c_ack_push(FtdiI2c* i2c, uint8_t bit) {
+    if(i2c->ack_count < sizeof(i2c->ack_bits)) {
+        i2c->ack_bits[i2c->ack_count++] = bit ? 1U : 0U;
+    }
+}
+
+static inline bool ftdi_i2c_ack_pop(FtdiI2c* i2c, uint8_t* bit) {
+    if(i2c->ack_index >= i2c->ack_count) {
+        return false;
+    }
+    *bit = i2c->ack_bits[i2c->ack_index++];
+    if(i2c->ack_index >= i2c->ack_count) {
+        ftdi_i2c_ack_reset(i2c);
+    }
+    return true;
+}
+
 void ftdi_i2c_setup(FtdiI2c* i2c) {
     i2c->scl_pin = &gpio_ext_pa7;
     i2c->sda_out_pin = &gpio_ext_pa6;
@@ -79,6 +102,8 @@ void ftdi_i2c_setup(FtdiI2c* i2c) {
     i2c->ack_level = true;
     i2c->ack_valid = false;
 
+    ftdi_i2c_ack_reset(i2c);
+
     furi_hal_gpio_init(i2c->scl_pin, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
     furi_hal_gpio_init(i2c->sda_out_pin, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
     furi_hal_gpio_init(i2c->sda_in_pin, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
@@ -88,6 +113,7 @@ void ftdi_i2c_enable(FtdiI2c* i2c) {
     ftdi_i2c_apply_scl(i2c, true, true);
     ftdi_i2c_apply_sda(i2c, true, true);
     furi_hal_gpio_init(i2c->sda_in_pin, GpioModeInput, GpioPullNo, GpioSpeedVeryHigh);
+    ftdi_i2c_ack_reset(i2c);
 }
 
 void ftdi_i2c_disable(FtdiI2c* i2c) {
@@ -97,6 +123,7 @@ void ftdi_i2c_disable(FtdiI2c* i2c) {
     i2c->scl_enabled = false;
     i2c->sda_out_enabled = false;
     i2c->ack_valid = false;
+    ftdi_i2c_ack_reset(i2c);
 }
 
 void ftdi_i2c_set_lines(FtdiI2c* i2c, uint8_t value, uint8_t direction) {
@@ -134,7 +161,7 @@ static bool ftdi_i2c_read_ack(FtdiI2c* i2c) {
     return ack;
 }
 
-size_t ftdi_i2c_write(FtdiI2c* i2c, const uint8_t* data, size_t size, uint8_t* ack_buf) {
+size_t ftdi_i2c_write(FtdiI2c* i2c, const uint8_t* data, size_t size) {
     if(size == 0) {
         return 0;
     }
@@ -153,9 +180,7 @@ size_t ftdi_i2c_write(FtdiI2c* i2c, const uint8_t* data, size_t size, uint8_t* a
         }
 
         bool ack = ftdi_i2c_read_ack(i2c);
-        if(ack_buf) {
-            ack_buf[ack_count] = ack ? 0x00 : 0x01;
-        }
+        ftdi_i2c_ack_push(i2c, ack ? 0U : 1U);
         ack_count++;
         if(!ack) {
             break;
@@ -206,5 +231,59 @@ bool ftdi_i2c_read(FtdiI2c* i2c, uint8_t* data, size_t size) {
     }
 
     ftdi_i2c_restore_sda(i2c);
+    return true;
+}
+
+bool ftdi_i2c_read_bits(FtdiI2c* i2c, uint8_t* data, size_t bit_count) {
+    if(bit_count == 0) {
+        return true;
+    }
+
+    size_t byte_count = (bit_count + 7U) / 8U;
+    memset(data, 0, byte_count);
+
+    bool used_bus = false;
+    size_t bit_index = 0;
+    size_t byte_index = 0;
+    uint8_t mask = 0x01;
+
+    while(bit_index < bit_count) {
+        uint8_t level = 1U;
+        if(!ftdi_i2c_ack_pop(i2c, &level)) {
+            if(!i2c->scl_enabled) {
+                return false;
+            }
+            if(!used_bus) {
+                ftdi_i2c_release_sda(i2c);
+                used_bus = true;
+            }
+            ftdi_i2c_half_period_delay(i2c);
+            ftdi_i2c_drive_scl(i2c, true);
+            ftdi_i2c_half_period_delay(i2c);
+            level = furi_hal_gpio_read(i2c->sda_in_pin) ? 1U : 0U;
+            ftdi_i2c_drive_scl(i2c, false);
+            ftdi_i2c_half_period_delay(i2c);
+        }
+
+        if(level) {
+            data[byte_index] |= mask;
+        }
+
+        bit_index++;
+        if(mask == 0x80) {
+            mask = 0x01;
+            byte_index++;
+        } else {
+            mask <<= 1;
+            if(bit_index == bit_count) {
+                byte_index++;
+            }
+        }
+    }
+
+    if(used_bus) {
+        ftdi_i2c_restore_sda(i2c);
+    }
+
     return true;
 }

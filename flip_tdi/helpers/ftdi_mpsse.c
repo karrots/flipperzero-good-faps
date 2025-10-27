@@ -281,12 +281,7 @@ void ftdi_mpsse_state_machine(FtdiMpsse* ftdi_mpsse) {
         ftdi_mpsse_get_data(ftdi_mpsse);
         if(i2c_mode) {
             size_t expected = ftdi_mpsse->data_buf_count_byte;
-            size_t ack_count =
-                ftdi_i2c_write(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, expected, ftdi_mpsse->data_buf);
-            if(ack_count > 0) {
-                ftdi_mpssse_set_data_stream(ftdi_mpsse, ftdi_mpsse->data_buf, ack_count);
-                ftdi_mpsse_immediate(ftdi_mpsse);
-            }
+            size_t ack_count = ftdi_i2c_write(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, expected);
             if(ack_count < expected) {
                 ftdi_mpsse->error = FtdiMpsseErrorI2cAck;
                 FURI_LOG_E(TAG, "I2C write NACK");
@@ -302,12 +297,7 @@ void ftdi_mpsse_state_machine(FtdiMpsse* ftdi_mpsse) {
         ftdi_mpsse_get_data(ftdi_mpsse);
         if(i2c_mode) {
             size_t expected = ftdi_mpsse->data_buf_count_byte;
-            size_t ack_count =
-                ftdi_i2c_write(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, expected, ftdi_mpsse->data_buf);
-            if(ack_count > 0) {
-                ftdi_mpssse_set_data_stream(ftdi_mpsse, ftdi_mpsse->data_buf, ack_count);
-                ftdi_mpsse_immediate(ftdi_mpsse);
-            }
+            size_t ack_count = ftdi_i2c_write(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, expected);
             if(ack_count < expected) {
                 ftdi_mpsse->error = FtdiMpsseErrorI2cAck;
                 FURI_LOG_E(TAG, "I2C write NACK");
@@ -400,16 +390,17 @@ void ftdi_mpsse_state_machine(FtdiMpsse* ftdi_mpsse) {
     case FtdiMpsseCommandsReadBitsPveMsb: // 0x22  Read bits with positive edge clock, MSB first */
         ftdi_mpsse->data_size = ftdi_mpsse_get_data_size(ftdi_mpsse);
         if(i2c_mode) {
-            if(ftdi_mpsse->data_size >= FTDI_MPSSE_TX_RX_SIZE) {
+            size_t bit_count = (size_t)ftdi_mpsse->data_size + 1U;
+            size_t byte_count = (bit_count + 7U) / 8U;
+            if(byte_count >= FTDI_MPSSE_TX_RX_SIZE) {
                 ftdi_mpsse->error = FtdiMpsseErrorTxOverflow;
                 FURI_LOG_E(TAG, "Tx buffer overflow");
             } else {
-                ftdi_mpsse->data_size++;
-                if(!ftdi_i2c_read(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, ftdi_mpsse->data_size)) {
+                if(!ftdi_i2c_read_bits(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, bit_count)) {
                     ftdi_mpsse->error = FtdiMpsseErrorI2cAck;
                     break;
                 }
-                ftdi_mpssse_set_data_stream(ftdi_mpsse, ftdi_mpsse->data_buf, ftdi_mpsse->data_size);
+                ftdi_mpssse_set_data_stream(ftdi_mpsse, ftdi_mpsse->data_buf, byte_count);
                 ftdi_mpsse_immediate(ftdi_mpsse);
             }
         }
@@ -463,12 +454,7 @@ void ftdi_mpsse_state_machine(FtdiMpsse* ftdi_mpsse) {
         ftdi_mpsse_get_data(ftdi_mpsse);
         if(i2c_mode) {
             size_t expected = ftdi_mpsse->data_buf_count_byte;
-            size_t ack_count =
-                ftdi_i2c_write(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, expected, ftdi_mpsse->data_buf);
-            if(ack_count > 0) {
-                ftdi_mpssse_set_data_stream(ftdi_mpsse, ftdi_mpsse->data_buf, ack_count);
-                ftdi_mpsse_immediate(ftdi_mpsse);
-            }
+            size_t ack_count = ftdi_i2c_write(&ftdi_mpsse->i2c, ftdi_mpsse->data_buf, expected);
             if(ack_count < expected) {
                 ftdi_mpsse->error = FtdiMpsseErrorI2cAck;
                 FURI_LOG_E(TAG, "I2C write NACK");

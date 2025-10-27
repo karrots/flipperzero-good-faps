@@ -22,6 +22,10 @@ typedef struct {
 
     bool ack_level;
     bool ack_valid;
+
+    uint8_t ack_bits[64];
+    size_t ack_count;
+    size_t ack_index;
 } FtdiI2c;
 
 void ftdi_i2c_setup(FtdiI2c* i2c);
@@ -29,5 +33,6 @@ void ftdi_i2c_enable(FtdiI2c* i2c);
 void ftdi_i2c_disable(FtdiI2c* i2c);
 void ftdi_i2c_set_lines(FtdiI2c* i2c, uint8_t value, uint8_t direction);
 void ftdi_i2c_set_divisor(FtdiI2c* i2c, uint16_t divisor);
-size_t ftdi_i2c_write(FtdiI2c* i2c, const uint8_t* data, size_t size, uint8_t* ack_buf);
+size_t ftdi_i2c_write(FtdiI2c* i2c, const uint8_t* data, size_t size);
 bool ftdi_i2c_read(FtdiI2c* i2c, uint8_t* data, size_t size);
+bool ftdi_i2c_read_bits(FtdiI2c* i2c, uint8_t* data, size_t bit_count);
