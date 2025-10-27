@@ -311,6 +311,10 @@ void ftdi_set_modem_status(Ftdi* ftdi, FtdiModemStatus status) {
     ftdi->status = status;
 }
 
+void ftdi_set_i2c_mode(Ftdi* ftdi, bool enable) {
+    ftdi_bitbang_set_i2c_mode(ftdi->ftdi_bitbang, enable);
+}
+
 void ftdi_start_uart_tx(Ftdi* ftdi) {
     ftdi_uart_tx(ftdi->ftdi_uart);
 }
